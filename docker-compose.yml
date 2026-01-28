@@ -1,0 +1,130 @@
+services:
+  # MCP Server - HTTP API for tools
+  mcp-server:
+    build:
+      context: ./services/mcp-server
+      dockerfile: Dockerfile
+    container_name: travel-weather-mcp
+    environment:
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    networks:
+      - travel-weather-network
+    volumes:
+      - logs:/app/logs
+    ports:
+      - "8000:8000"  # HTTP API for MCP tools
+    command: ["/bin/sh", "-c", "python app.py 2>&1 | tee /app/logs/mcp-server.log"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Agent Service - AI logic
+  travel-agent:
+    build:
+      context: ./services/agent
+      dockerfile: Dockerfile
+    container_name: travel-weather-agent
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONUNBUFFERED=1
+      - MCP_SERVER_URL=http://mcp-server:8000
+    restart: unless-stopped
+    depends_on:
+      - mcp-server
+    networks:
+      - travel-weather-network
+    volumes:
+      - logs:/app/logs
+      - agent-data:/data  # Persistent database storage
+    ports:
+      - "8001:8001"  # Agent HTTP API
+    command: ["/bin/sh", "-c", "python app.py 2>&1 | tee /app/logs/agent.log"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # Web interface - pure frontend
+  agent-web:
+    build:
+      context: ./services/web
+      dockerfile: Dockerfile
+    container_name: travel-weather-web
+    environment:
+      - AGENT_SERVICE_URL=http://travel-agent:8001
+    restart: unless-stopped
+    depends_on:
+      - travel-agent
+    networks:
+      - travel-weather-network
+    ports:
+      - "8080:8080"  # Web interface port
+    volumes:
+      - logs:/app/logs
+    command: ["/bin/sh", "-c", "python app.py 2>&1 | tee /app/logs/web.log"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # Database Viewer - Datasette for SQLite inspection (optional)
+  datasette:
+    image: datasetteproject/datasette:latest
+    container_name: travel-weather-datasette
+    restart: unless-stopped
+    networks:
+      - travel-weather-network
+    volumes:
+      - agent-data:/data:ro  # Read-only access to database
+    ports:
+      - "8090:8001"  # Datasette web interface (internal port 8001, external 8090)
+    depends_on:
+      - travel-agent
+    command: ["datasette", "serve", "/data/conversations.db", "-h", "0.0.0.0", "-p", "8001"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # MCP SDK Client - Third-party compliance test (optional)
+  mcp-sdk-client:
+    build:
+      context: ./services/mcp-sdk-client
+      dockerfile: Dockerfile
+    container_name: travel-weather-mcp-sdk-client
+    environment:
+      - MCP_SERVER_URL=http://mcp-server:8000
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+    networks:
+      - travel-weather-network
+    profiles:
+      - compliance-test  # Only run with: docker compose --profile compliance-test up
+    command: ["python", "test_mcp_sdk.py"]
+
+networks:
+  travel-weather-network:
+    driver: bridge
+    name: travel-weather-network
+
+volumes:
+  logs:
+    driver: local
+    name: travel-weather-logs
+  agent-data:
+    driver: local  # Persistent storage for conversation database
+    name: travel-weather-agent-data
+
