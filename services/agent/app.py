@@ -46,7 +46,10 @@ class MicroserviceAgent:
     
     def __init__(self, mcp_server_url: str = None, memory_db_path: str = "/data/conversations.db"):
         # Initialiser OpenAI klient
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"),base_url="https://models.github.ai/inference")
+        # Støtter både GitHub Models (standard for workshop) og OpenAI API
+        base_url = os.getenv("OPENAI_BASE_URL", "https://models.github.ai/inference")
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), base_url=base_url)
+        logger.info(f"OpenAI client configured with base_url: {base_url}")
         
         # MCP server URL - bruk environment variable hvis tilgjengelig
         if mcp_server_url is None:
